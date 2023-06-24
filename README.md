@@ -18,14 +18,16 @@ Go to the project directory
   cd RL-Flax
 ```
 
-Install dependencies
+Install basic dependencies
 
 ```bash
   pip install "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
   pip install flax tensorflow-probability
 ```
 
-Run the notebook you want!
+Install environment specific dependencies
+
+Run the algorithm you want!
 
 
 ## Roadmap
