@@ -27,6 +27,64 @@ from jax.lax import stop_gradient
 from jax import value_and_grad
 
 
+class Network(nn.Module):
+    @nn.compact
+    def __call__(self, x: Array):
+        x = nn.Sequential([
+            convolution_layer_init(32, 8, 4),
+            nn.relu,
+            convolution_layer_init(64, 4, 2),
+            nn.relu,
+            convolution_layer_init(64, 3, 1),
+            nn.relu,
+        ])(x)
+        x = jnp.reshape(x, (x.shape[0], -1))
+        return nn.Sequential([
+            linear_layer_init(512),
+            nn.relu
+        ])(x)
+
+
+class Actor(nn.Module):
+    action_n: int
+
+    @nn.compact
+    def __call__(self, x: Array):
+        return linear_layer_init(self.action_n, std=0.01)(x)
+
+
+class Critic(nn.Module):
+    @nn.compact
+    def __call__(self, x: Array):
+        return linear_layer_init(1, std=1)(x)
+
+
+@dataclass
+class AgentParams:
+    actor_params: FrozenDict
+    critic_params: FrozenDict
+    network_params: FrozenDict
+
+
+class AgentState(TrainState):
+    # Setting default values for agent functions to make TrainState work in jitted function
+    actor_fn: Callable = struct.field(pytree_node=False)
+    critic_fn: Callable = struct.field(pytree_node=False)
+    network_fn: Callable = struct.field(pytree_node=False)
+
+
+@dataclass
+class Storage:
+    obs: jnp.array
+    actions: jnp.array
+    logprobs: jnp.array
+    dones: jnp.array
+    values: jnp.array
+    advantages: jnp.array
+    returns: jnp.array
+    rewards: jnp.array
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--total-timesteps', type=int, default=10000000, help='total timesteps of the experiment')
@@ -87,68 +145,10 @@ def convolution_layer_init(features, kernel_size, strides, std=np.sqrt(2), bias_
     return layer
 
 
-class Network(nn.Module):
-    @nn.compact
-    def __call__(self, x: Array):
-        x = nn.Sequential([
-            convolution_layer_init(32, 8, 4),
-            nn.relu,
-            convolution_layer_init(64, 4, 2),
-            nn.relu,
-            convolution_layer_init(64, 3, 1),
-            nn.relu,
-        ])(x)
-        x = jnp.reshape(x, (x.shape[0], -1))
-        return nn.Sequential([
-            linear_layer_init(512),
-            nn.relu
-        ])(x)
-
-
-class Actor(nn.Module):
-    action_n: int
-
-    @nn.compact
-    def __call__(self, x: Array):
-        return linear_layer_init(self.action_n, std=0.01)(x)
-
-
-class Critic(nn.Module):
-    @nn.compact
-    def __call__(self, x: Array):
-        return linear_layer_init(1, std=1)(x)
-
-
 # Anneal learning rate over time
 def linear_schedule(count):
     frac = 1.0 - (count // (args.num_minibatches * args.update_epochs)) / args.num_updates
     return args.learning_rate * frac
-
-
-@dataclass
-class AgentParams:
-    actor_params: FrozenDict
-    critic_params: FrozenDict
-    network_params: FrozenDict
-
-
-class AgentState(TrainState):
-    # Setting default values for agent functions to make TrainState work in jitted function
-    actor_fn: Callable = struct.field(pytree_node=False)
-    critic_fn: Callable = struct.field(pytree_node=False)
-    network_fn: Callable = struct.field(pytree_node=False)
-
-
-@dataclass
-class Storage:
-    obs: jnp.array
-    actions: jnp.array
-    logprobs: jnp.array
-    dones: jnp.array
-    values: jnp.array
-    advantages: jnp.array
-    returns: jnp.array
-    rewards: jnp.array
 
 
 @jit

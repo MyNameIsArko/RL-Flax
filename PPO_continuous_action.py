@@ -27,6 +27,45 @@ from jax.lax import stop_gradient
 from jax import value_and_grad
 
 
+class Actor(nn.Module):
+    action_shape_prod: int
+
+    @nn.compact
+    def __call__(self, x: Array):
+        action_mean = nn.Sequential([
+            linear_layer_init(64),
+            nn.tanh,
+            linear_layer_init(64),
+            nn.tanh,
+            linear_layer_init(self.action_shape_prod, std=0.01),
+        ])(x)
+        actor_logstd = self.param('logstd', nn.initializers.zeros, (1, self.action_shape_prod))
+        action_logstd = jnp.broadcast_to(actor_logstd, action_mean.shape)  # Make logstd the same shape as actions
+        return action_mean, action_logstd
+
+
+class Critic(nn.Module):
+    @nn.compact
+    def __call__(self, x: Array):
+        return nn.Sequential([
+            linear_layer_init(64),
+            nn.tanh,
+            linear_layer_init(64),
+            nn.tanh,
+            linear_layer_init(1, std=1.0),
+        ])(x)
+
+@dataclass
+class AgentParams:
+    actor_params: FrozenDict
+    critic_params: FrozenDict
+
+class AgentState(TrainState):
+    # Setting default values for agent functions to make TrainState work in jitted function
+    actor_fn: Callable = struct.field(pytree_node=False)
+    critic_fn: Callable = struct.field(pytree_node=False)
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--total-timesteps', type=int, default=8000000, help='total timesteps of the experiment')
@@ -81,51 +120,10 @@ def linear_layer_init(features, std=np.sqrt(2), bias_const=0.0):
     return layer
 
 
-class Actor(nn.Module):
-    action_shape_prod: int
-
-    @nn.compact
-    def __call__(self, x: Array):
-        action_mean = nn.Sequential([
-            linear_layer_init(64),
-            nn.tanh,
-            linear_layer_init(64),
-            nn.tanh,
-            linear_layer_init(self.action_shape_prod, std=0.01),
-        ])(x)
-        actor_logstd = self.param('logstd', nn.initializers.zeros, (1, self.action_shape_prod))
-        action_logstd = jnp.broadcast_to(actor_logstd, action_mean.shape)  # Make logstd the same shape as actions
-        return action_mean, action_logstd
-
-
-class Critic(nn.Module):
-    @nn.compact
-    def __call__(self, x: Array):
-        return nn.Sequential([
-            linear_layer_init(64),
-            nn.tanh,
-            linear_layer_init(64),
-            nn.tanh,
-            linear_layer_init(1, std=1.0),
-        ])(x)
-
-
 # Anneal learning rate over time
 def linear_schedule(count):
     frac = 1.0 - (count // (args.num_minibatches * args.update_epochs)) / args.num_updates
     return args.learning_rate * frac
-
-
-@dataclass
-class AgentParams:
-    actor_params: FrozenDict
-    critic_params: FrozenDict
-
-
-class AgentState(TrainState):
-    # Setting default values for agent functions to make TrainState work in jitted function
-    actor_fn: Callable = struct.field(pytree_node=False)
-    critic_fn: Callable = struct.field(pytree_node=False)
 
 
 @dataclass
