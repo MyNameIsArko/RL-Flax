@@ -1,0 +1,33 @@
+[project]
+name = "rl-flax"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "flax>=0.12.10,<0.13",
+    "gymnasium[classic-control]>=1.4.0,<2",
+    "jax>=0.12.0.1,<0.13",
+    "numpy>=2.5.4",
+    "optax>=0.2.8,<0.3",
+    "orbax-checkpoint>=0.12.8,<0.13",
+    "tensorboardx>=2.6.5",
+    "tqdm>=4.70.1",
+]
+
+[project.optional-dependencies]
+mujoco = [
+    "gymnasium[mujoco]>=1.4.0,<2",
+]
+atari = [
+    "gymnasium[atari]>=1.4.0,<2",
+    "opencv-python>=5.0.0.93",
+]
+video = [
+    "moviepy>=2.2.1",
+]
+tracking = [
+    "tensorboard>=2.21.0",
+    "wandb>=0.31.0",
+]
+
+[tool.uv]
+package = false
