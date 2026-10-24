@@ -41,12 +41,6 @@ uv run --locked --extra mujoco python PPO_continuous_action.py --help
 uv run --locked --extra atari python PPO_atari.py --help
 ```
 
-Run the synthetic checks with:
-
-```bash
-uv run --locked --all-extras python -B -W error::DeprecationWarning -W error::FutureWarning -m unittest discover -s tests -p 'test_modernization.py' -v
-```
-
 CUDA setup and learning performance are not covered by these instructions.
 
 
