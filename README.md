@@ -37,6 +37,10 @@ Install every optional feature with `uv sync --locked --all-extras`, or select o
 
 ```bash
 uv run --locked python PPO.py --help
+uv run --locked python DQN.py --help
+uv run --locked python DQN.py --total-timesteps 2048 --learning-starts 128 \
+  --batch-size 32 --buffer-size 1024 --train-frequency 4 \
+  --target-network-frequency 100 --exp-name dqn_smoke
 uv run --locked --extra mujoco python PPO_continuous_action.py --help
 uv run --locked --extra atari python PPO_atari.py --help
 ```
@@ -45,8 +49,6 @@ CUDA setup and learning performance are not covered by these instructions.
 
 
 ## Roadmap
-
-- DQN
 
 - Rainbow DQN
 
