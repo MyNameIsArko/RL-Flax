@@ -1306,16 +1306,16 @@ video = [
 
 [package.metadata]
 requires-dist = [
-    { name = "flax", specifier = ">=0.12.10" },
-    { name = "gymnasium", extras = ["atari"], marker = "extra == 'atari'", specifier = ">=1.4.0" },
-    { name = "gymnasium", extras = ["classic-control"], specifier = ">=1.4.0" },
-    { name = "gymnasium", extras = ["mujoco"], marker = "extra == 'mujoco'", specifier = ">=1.4.0" },
-    { name = "jax", specifier = ">=0.12.0.1" },
+    { name = "flax", specifier = ">=0.12.10,<0.13" },
+    { name = "gymnasium", extras = ["atari"], marker = "extra == 'atari'", specifier = ">=1.4.0,<2" },
+    { name = "gymnasium", extras = ["classic-control"], specifier = ">=1.4.0,<2" },
+    { name = "gymnasium", extras = ["mujoco"], marker = "extra == 'mujoco'", specifier = ">=1.4.0,<2" },
+    { name = "jax", specifier = ">=0.12.0.1,<0.13" },
     { name = "moviepy", marker = "extra == 'video'", specifier = ">=2.2.1" },
     { name = "numpy", specifier = ">=2.5.4" },
     { name = "opencv-python", marker = "extra == 'atari'", specifier = ">=5.0.0.93" },
-    { name = "optax", specifier = ">=0.2.8" },
-    { name = "orbax-checkpoint", specifier = ">=0.12.8" },
+    { name = "optax", specifier = ">=0.2.8,<0.3" },
+    { name = "orbax-checkpoint", specifier = ">=0.12.8,<0.13" },
     { name = "tensorboard", marker = "extra == 'tracking'", specifier = ">=2.21.0" },
     { name = "tensorboardx", specifier = ">=2.6.5" },
     { name = "tqdm", specifier = ">=4.70.1" },
