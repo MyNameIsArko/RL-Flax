@@ -3,6 +3,7 @@ import math
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 import gymnasium as gym
 import jax
@@ -15,42 +16,43 @@ from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
 
-def linear_layer_init(in_features, out_features, *, rngs, std=np.sqrt(2), bias_const=0.0):
+def linear_layer_init(in_features: int, out_features: int, *, rngs: nnx.Rngs,
+                      std: float = np.sqrt(2), bias_const: float = 0.0) -> nnx.Linear:
     return nnx.Linear(in_features, out_features, rngs=rngs,
                       kernel_init=nnx.initializers.orthogonal(std),
                       bias_init=nnx.initializers.constant(bias_const))
 
 
 class Actor(nnx.Module):
-    def __init__(self, obs_dim, action_dim, *, rngs):
+    def __init__(self, obs_dim: int, action_dim: int, *, rngs: nnx.Rngs) -> None:
         self.layers = nnx.Sequential(
             linear_layer_init(obs_dim, 64, rngs=rngs), nnx.tanh,
             linear_layer_init(64, 64, rngs=rngs), nnx.tanh,
             linear_layer_init(64, action_dim, rngs=rngs, std=0.01))
         self.logstd = nnx.Param(jnp.zeros((1, action_dim), jnp.float32))
 
-    def __call__(self, obs):
+    def __call__(self, obs: np.ndarray | jax.Array) -> tuple[jax.Array, jax.Array]:
         mean = self.layers(obs)
         return mean, jnp.broadcast_to(self.logstd[...], mean.shape)
 
 
 class Critic(nnx.Module):
-    def __init__(self, obs_dim, *, rngs):
+    def __init__(self, obs_dim: int, *, rngs: nnx.Rngs) -> None:
         self.layers = nnx.Sequential(
             linear_layer_init(obs_dim, 64, rngs=rngs), nnx.tanh,
             linear_layer_init(64, 64, rngs=rngs), nnx.tanh,
             linear_layer_init(64, 1, rngs=rngs, std=1.0))
 
-    def __call__(self, obs):
+    def __call__(self, obs: np.ndarray | jax.Array) -> jax.Array:
         return self.layers(obs)
 
 
 class Agent(nnx.Module):
-    def __init__(self, obs_dim, action_dim, *, rngs):
+    def __init__(self, obs_dim: int, action_dim: int, *, rngs: nnx.Rngs) -> None:
         self.actor = Actor(obs_dim, action_dim, rngs=rngs)
         self.critic = Critic(obs_dim, rngs=rngs)
 
-    def __call__(self, obs):
+    def __call__(self, obs: np.ndarray | jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
         mean, logstd = self.actor(obs)
         return mean, logstd, jnp.squeeze(self.critic(obs), axis=-1)
 
@@ -67,7 +69,7 @@ class Storage:
     rewards: jax.Array
 
 
-def parse_args(argv=None):
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument('--total-timesteps', type=int, default=8000000, help='total timesteps of the experiment')
     parser.add_argument('--learning-rate', type=float, default=3e-4, help='the learning rate of the optimizer')
@@ -110,8 +112,9 @@ def parse_args(argv=None):
     return args
 
 
-def make_env(env_id, idx, capture_video, run_name, gamma):
-    def thunk():
+def make_env(env_id: str, idx: int, capture_video: bool, run_name: str,
+             gamma: float) -> Callable[[], gym.Env]:
+    def thunk() -> gym.Env:
         env = gym.make(env_id, render_mode='rgb_array') if capture_video and idx == 0 else gym.make(env_id)
         if capture_video and idx == 0:
             env = gym.wrappers.RecordVideo(env, f'videos/{run_name}')
@@ -127,27 +130,31 @@ def make_env(env_id, idx, capture_video, run_name, gamma):
     return thunk
 
 
-def normal_logprob(mean, logstd, actions):
+def normal_logprob(mean: jax.Array, logstd: jax.Array, actions: jax.Array) -> jax.Array:
     inv_std = jnp.exp(-logstd)
     return (-0.5 * ((actions - mean) * inv_std) ** 2 - logstd - 0.5 * jnp.log(2 * jnp.pi)).sum(axis=-1)
 
 
 @nnx.jit
-def get_action_and_value(agent, obs, key):
+def get_action_and_value(agent: Agent, obs: np.ndarray | jax.Array, key: jax.Array
+                         ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     mean, logstd, values = agent(obs)
     next_key, sample_key = jax.random.split(key)
     actions = mean + jnp.exp(logstd) * jax.random.normal(sample_key, mean.shape)
     return actions, normal_logprob(mean, logstd, actions), values, next_key
 
 
-def get_action_and_value2(agent, obs, actions):
+def get_action_and_value2(agent: Agent, obs: jax.Array, actions: jax.Array
+                          ) -> tuple[jax.Array, jax.Array, jax.Array]:
     mean, logstd, values = agent(obs)
     logprobs = normal_logprob(mean, logstd, actions)
     entropy = (logstd + 0.5 * jnp.log(2 * jnp.pi * jnp.e)).sum(axis=-1)
     return logprobs, entropy, values
 
 
-def rollout(agent, envs, obs, storage, key, global_step, writer, args):
+def rollout(agent: Agent, envs: gym.vector.SyncVectorEnv, obs: np.ndarray, storage: Storage,
+            key: jax.Array, global_step: int, writer: SummaryWriter, args: argparse.Namespace
+            ) -> tuple[np.ndarray, Storage, jax.Array, int]:
     for step in range(args.num_steps):
         actions, logprobs, values, key = get_action_and_value(agent, obs, key)
         next_obs, rewards, terminated, truncated, infos = envs.step(np.asarray(actions))
@@ -179,11 +186,14 @@ def rollout(agent, envs, obs, storage, key, global_step, writer, args):
 
 
 @jax.jit
-def compute_gae(rewards, values, episode_ends, last_value, gamma, gae_lambda):
+def compute_gae(rewards: jax.Array, values: jax.Array, episode_ends: jax.Array,
+                last_value: jax.Array, gamma: float, gae_lambda: float
+                ) -> tuple[jax.Array, jax.Array]:
     next_values = jnp.concatenate((values[1:], last_value[None, :]), axis=0)
     mask = 1.0 - episode_ends.astype(jnp.float32)
     delta = rewards + gamma * mask * next_values - values
-    def scan(carry, inputs):
+    def scan(carry: jax.Array, inputs: tuple[jax.Array, jax.Array]
+             ) -> tuple[jax.Array, jax.Array]:
         d, m = inputs
         adv = d + gamma * gae_lambda * m * carry
         return adv, adv
@@ -192,8 +202,10 @@ def compute_gae(rewards, values, episode_ends, last_value, gamma, gae_lambda):
     return advantages, jax.lax.stop_gradient(advantages + values)
 
 
-def ppo_loss(agent, obs, actions, old_logprobs, advantages, returns, old_values,
-             clip_coef, ent_coef, vf_coef):
+def ppo_loss(agent: Agent, obs: jax.Array, actions: jax.Array, old_logprobs: jax.Array,
+             advantages: jax.Array, returns: jax.Array, old_values: jax.Array,
+             clip_coef: float, ent_coef: float, vf_coef: float
+             ) -> tuple[jax.Array, tuple[jax.Array, jax.Array, jax.Array, jax.Array]]:
     newlp, entropy, newvalue = get_action_and_value2(agent, obs, actions)
     logratio = newlp - old_logprobs
     ratio = jnp.exp(logratio)
@@ -208,8 +220,10 @@ def ppo_loss(agent, obs, actions, old_logprobs, advantages, returns, old_values,
 
 
 @nnx.jit
-def train_minibatch(agent, optimizer, obs, actions, old_logprobs, advantages, returns, old_values,
-                    clip_coef, ent_coef, vf_coef):
+def train_minibatch(agent: Agent, optimizer: nnx.Optimizer, obs: jax.Array, actions: jax.Array,
+                    old_logprobs: jax.Array, advantages: jax.Array, returns: jax.Array,
+                    old_values: jax.Array, clip_coef: float, ent_coef: float, vf_coef: float
+                    ) -> tuple[jax.Array, tuple[jax.Array, jax.Array, jax.Array, jax.Array]]:
     (loss, metrics), grads = nnx.value_and_grad(ppo_loss, argnums=0, has_aux=True)(
         agent, obs, actions, old_logprobs, advantages, returns, old_values,
         clip_coef, ent_coef, vf_coef)
@@ -217,7 +231,10 @@ def train_minibatch(agent, optimizer, obs, actions, old_logprobs, advantages, re
     return loss, metrics
 
 
-def update_ppo(agent, optimizer, storage, key, args):
+def update_ppo(agent: Agent, optimizer: nnx.Optimizer, storage: Storage, key: jax.Array,
+               args: argparse.Namespace
+               ) -> tuple[jax.Array, tuple[jax.Array, jax.Array, jax.Array, jax.Array],
+                          jax.Array, jax.Array, jax.Array]:
     flatten = lambda x: x.reshape((args.batch_size,) + x.shape[2:])
     obs, actions = flatten(storage.obs), flatten(storage.actions)
     logprobs, advantages = flatten(storage.logprobs), flatten(storage.advantages)
@@ -235,7 +252,7 @@ def update_ppo(agent, optimizer, storage, key, args):
     return loss, metrics, explained, key, lr
 
 
-def main():
+def main() -> None:
     import signal
     signal.signal(signal.SIGINT, signal.default_int_handler)
     args = parse_args()

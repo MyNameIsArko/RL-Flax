@@ -3,6 +3,7 @@ import math
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 import gymnasium as gym
 import jax
@@ -15,42 +16,43 @@ from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
 
-def linear_layer_init(in_features, out_features, *, rngs, std=np.sqrt(2), bias_const=0.0):
+def linear_layer_init(in_features: int, out_features: int, *, rngs: nnx.Rngs,
+                      std: float = np.sqrt(2), bias_const: float = 0.0) -> nnx.Linear:
     return nnx.Linear(in_features, out_features, rngs=rngs,
                       kernel_init=nnx.initializers.orthogonal(std),
                       bias_init=nnx.initializers.constant(bias_const))
 
 
 class Actor(nnx.Module):
-    def __init__(self, obs_dim, action_n, *, rngs):
+    def __init__(self, obs_dim: int, action_n: int, *, rngs: nnx.Rngs) -> None:
         self.layers = nnx.Sequential(
             linear_layer_init(obs_dim, 64, rngs=rngs), nnx.tanh,
             linear_layer_init(64, 64, rngs=rngs), nnx.tanh,
             linear_layer_init(64, action_n, rngs=rngs, std=0.01),
         )
 
-    def __call__(self, obs):
+    def __call__(self, obs: np.ndarray | jax.Array) -> jax.Array:
         return self.layers(obs)
 
 
 class Critic(nnx.Module):
-    def __init__(self, obs_dim, *, rngs):
+    def __init__(self, obs_dim: int, *, rngs: nnx.Rngs) -> None:
         self.layers = nnx.Sequential(
             linear_layer_init(obs_dim, 64, rngs=rngs), nnx.tanh,
             linear_layer_init(64, 64, rngs=rngs), nnx.tanh,
             linear_layer_init(64, 1, rngs=rngs, std=1.0),
         )
 
-    def __call__(self, obs):
+    def __call__(self, obs: np.ndarray | jax.Array) -> jax.Array:
         return self.layers(obs)
 
 
 class Agent(nnx.Module):
-    def __init__(self, obs_dim, action_n, *, rngs):
+    def __init__(self, obs_dim: int, action_n: int, *, rngs: nnx.Rngs) -> None:
         self.actor = Actor(obs_dim, action_n, rngs=rngs)
         self.critic = Critic(obs_dim, rngs=rngs)
 
-    def __call__(self, obs):
+    def __call__(self, obs: np.ndarray | jax.Array) -> tuple[jax.Array, jax.Array]:
         logits = self.actor(obs)
         values = jnp.squeeze(self.critic(obs), axis=-1)
         return logits, values
@@ -68,7 +70,7 @@ class Storage:
     rewards: jax.Array
 
 
-def parse_args(argv=None):
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument('--total-timesteps', type=int, default=500000, help='total timesteps of the experiment')
     parser.add_argument('--learning-rate', type=float, default=3e-4, help='the learning rate of the optimizer')
@@ -112,8 +114,8 @@ def parse_args(argv=None):
     return args
 
 
-def make_env(env_id, idx, capture_video, run_name):
-    def thunk():
+def make_env(env_id: str, idx: int, capture_video: bool, run_name: str) -> Callable[[], gym.Env]:
+    def thunk() -> gym.Env:
         env = gym.make(env_id, render_mode='rgb_array') if capture_video and idx == 0 else gym.make(env_id)
         if capture_video and idx == 0:
             env = gym.wrappers.RecordVideo(env, f'videos/{run_name}')
@@ -122,7 +124,8 @@ def make_env(env_id, idx, capture_video, run_name):
 
 
 @nnx.jit
-def get_action_and_value(agent, obs, key):
+def get_action_and_value(agent: Agent, obs: np.ndarray | jax.Array, key: jax.Array
+                         ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     logits, values = agent(obs)
     next_key, sample_key = jax.random.split(key)
     actions = jax.random.categorical(sample_key, logits, axis=-1).astype(jnp.int32)
@@ -131,7 +134,8 @@ def get_action_and_value(agent, obs, key):
     return actions, selected, values, next_key
 
 
-def get_action_and_value2(agent, obs, actions):
+def get_action_and_value2(agent: Agent, obs: jax.Array, actions: jax.Array
+                          ) -> tuple[jax.Array, jax.Array, jax.Array]:
     logits, values = agent(obs)
     log_probs = jax.nn.log_softmax(logits, axis=-1)
     selected = jnp.take_along_axis(log_probs, actions[..., None], axis=-1)[..., 0]
@@ -139,7 +143,9 @@ def get_action_and_value2(agent, obs, actions):
     return selected, entropy, values
 
 
-def rollout(agent, envs, obs, storage, key, global_step, writer, args):
+def rollout(agent: Agent, envs: gym.vector.SyncVectorEnv, obs: np.ndarray, storage: Storage,
+            key: jax.Array, global_step: int, writer: SummaryWriter, args: argparse.Namespace
+            ) -> tuple[np.ndarray, Storage, jax.Array, int]:
     for step in range(args.num_steps):
         actions, logprobs, values, key = get_action_and_value(agent, obs, key)
         next_obs, rewards, terminated, truncated, infos = envs.step(np.asarray(actions))
@@ -177,11 +183,14 @@ def rollout(agent, envs, obs, storage, key, global_step, writer, args):
 
 
 @jax.jit
-def compute_gae(rewards, values, episode_ends, last_value, gamma, gae_lambda):
+def compute_gae(rewards: jax.Array, values: jax.Array, episode_ends: jax.Array,
+                last_value: jax.Array, gamma: float, gae_lambda: float
+                ) -> tuple[jax.Array, jax.Array]:
     next_values = jnp.concatenate((values[1:], last_value[None, :]), axis=0)
     continue_mask = 1.0 - episode_ends.astype(jnp.float32)
     deltas = rewards + gamma * continue_mask * next_values - values
-    def scan(carry, inputs):
+    def scan(carry: jax.Array, inputs: tuple[jax.Array, jax.Array]
+             ) -> tuple[jax.Array, jax.Array]:
         delta, mask = inputs
         advantage = delta + gamma * gae_lambda * mask * carry
         return advantage, advantage
@@ -191,8 +200,10 @@ def compute_gae(rewards, values, episode_ends, last_value, gamma, gae_lambda):
     return jax.lax.stop_gradient(advantages), jax.lax.stop_gradient(advantages + values)
 
 
-def ppo_loss(agent, obs, actions, old_logprobs, advantages, returns, old_values,
-             clip_coef, ent_coef, vf_coef):
+def ppo_loss(agent: Agent, obs: jax.Array, actions: jax.Array, old_logprobs: jax.Array,
+             advantages: jax.Array, returns: jax.Array, old_values: jax.Array,
+             clip_coef: float, ent_coef: float, vf_coef: float
+             ) -> tuple[jax.Array, tuple[jax.Array, jax.Array, jax.Array, jax.Array]]:
     newlogprob, entropy, newvalue = get_action_and_value2(agent, obs, actions)
     logratio = newlogprob - old_logprobs
     ratio = jnp.exp(logratio)
@@ -208,8 +219,10 @@ def ppo_loss(agent, obs, actions, old_logprobs, advantages, returns, old_values,
 
 
 @nnx.jit
-def train_minibatch(agent, optimizer, obs, actions, old_logprobs, advantages,
-                    returns, old_values, clip_coef, ent_coef, vf_coef):
+def train_minibatch(agent: Agent, optimizer: nnx.Optimizer, obs: jax.Array, actions: jax.Array,
+                    old_logprobs: jax.Array, advantages: jax.Array, returns: jax.Array,
+                    old_values: jax.Array, clip_coef: float, ent_coef: float, vf_coef: float
+                    ) -> tuple[jax.Array, tuple[jax.Array, jax.Array, jax.Array, jax.Array]]:
     (loss, metrics), grads = nnx.value_and_grad(ppo_loss, argnums=0, has_aux=True)(
         agent, obs, actions, old_logprobs, advantages, returns, old_values,
         clip_coef, ent_coef, vf_coef)
@@ -217,7 +230,10 @@ def train_minibatch(agent, optimizer, obs, actions, old_logprobs, advantages,
     return loss, metrics
 
 
-def update_ppo(agent, optimizer, storage, key, args):
+def update_ppo(agent: Agent, optimizer: nnx.Optimizer, storage: Storage, key: jax.Array,
+               args: argparse.Namespace
+               ) -> tuple[jax.Array, tuple[jax.Array, jax.Array, jax.Array, jax.Array],
+                          jax.Array, jax.Array, jax.Array]:
     flat = lambda x: x.reshape((args.batch_size,) + x.shape[2:])
     b_obs, b_actions = flat(storage.obs), flat(storage.actions)
     b_logprobs, b_advantages = flat(storage.logprobs), flat(storage.advantages)
@@ -236,7 +252,7 @@ def update_ppo(agent, optimizer, storage, key, args):
     return loss, metrics, explained_var, key, learning_rate
 
 
-def main():
+def main() -> None:
     import signal
     signal.signal(signal.SIGINT, signal.default_int_handler)
     args = parse_args()
@@ -259,7 +275,7 @@ def main():
         rngs = nnx.Rngs(default=init_key)
         agent = Agent(envs.single_observation_space.shape[0], envs.single_action_space.n, rngs=rngs)
         updates_per_rollout = args.num_minibatches * args.update_epochs
-        def schedule(count):
+        def schedule(count: jax.Array) -> jax.Array:
             rollout_index = count // updates_per_rollout
             return args.learning_rate * (1 - rollout_index / args.num_updates)
         tx = optax.chain(optax.clip_by_global_norm(args.max_grad_norm),
